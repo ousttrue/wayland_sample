@@ -1,5 +1,7 @@
 # wayland EGL sample
 
+* https://github.com/eyelash/tutorials
+
 ## src/hello
 
 * [Wayland の Client と Compositor の概念を理解する](https://qiita.com/naohikowatanabe/items/06a8b988b89b4b1ec899)
