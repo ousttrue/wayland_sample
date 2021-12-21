@@ -3,7 +3,7 @@
  *
  * cc -o triangle_simple triangle_simple.c -lwayland-client -lwayland-egl -lEGL -lGLESv2
  */
-
+#include <memory>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <assert.h>
@@ -34,33 +34,6 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t i
 }
 
 static const struct wl_registry_listener registry_listener = {registry_global, NULL};
-
-/*
- * Connect to the Wayland display and return the display and the surface
- * output wlDisplay
- * output wlSurface
- */
-static void initWaylandDisplay(struct wl_display **wlDisplay, struct wl_surface **wlSurface)
-{
-    struct WaylandGlobals globals = {0};
-
-    *wlDisplay = wl_display_connect(NULL);
-    assert(*wlDisplay != NULL);
-
-    struct wl_registry *registry = wl_display_get_registry(*wlDisplay);
-    wl_registry_add_listener(registry, &registry_listener, (void *)&globals);
-
-    wl_display_dispatch(*wlDisplay);
-    wl_display_roundtrip(*wlDisplay);
-    assert(globals.compositor);
-    assert(globals.shell);
-
-    *wlSurface = wl_compositor_create_surface(globals.compositor);
-    assert(*wlSurface != NULL);
-
-    struct wl_shell_surface *shellSurface = wl_shell_get_shell_surface(globals.shell, *wlSurface);
-    wl_shell_surface_set_toplevel(shellSurface);
-}
 
 /*
  * Configure EGL and return necessary resources
@@ -103,25 +76,6 @@ static void initEGLDisplay(EGLNativeDisplayType nativeDisplay, EGLNativeWindowTy
 
     EGLBoolean makeCurrent = eglMakeCurrent(*eglDisplay, *eglSurface, *eglSurface, eglContext);
     assert(makeCurrent == EGL_TRUE);
-}
-
-/*
- * Connect Wayland and make EGL
- * input width
- * input height
- * output wlDisplay
- * output eglDisplay
- * output eglSurface
- */
-static void initWindow(GLint width, GLint height, struct wl_display **wlDisplay, EGLDisplay *eglDisplay, EGLSurface *eglSurface)
-{
-    struct wl_surface *wlSurface;
-    initWaylandDisplay(wlDisplay, &wlSurface);
-
-    struct wl_egl_window *wlEglWindow = wl_egl_window_create(wlSurface, width, height);
-    assert(wlEglWindow != NULL);
-
-    initEGLDisplay((EGLNativeDisplayType)*wlDisplay, (EGLNativeWindowType)wlEglWindow, eglDisplay, eglSurface);
 }
 
 /*
@@ -198,30 +152,108 @@ void draw(GLuint programObject, GLint width, GLint height)
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+class WaylandWindow
+{
+    wl_display *wlDisplay = nullptr;
+    wl_surface *wlSurface = nullptr;
+    EGLDisplay eglDisplay;
+    EGLSurface eglSurface;
+
+    WaylandWindow(wl_display *display, wl_surface *surface)
+        : wlDisplay(display), wlSurface(surface)
+    {
+    }
+
+public:
+    static std::unique_ptr<WaylandWindow> create(int width, int height)
+    {
+        auto wlDisplay = wl_display_connect(NULL);
+        if (!wlDisplay)
+        {
+            return nullptr;
+        }
+
+        WaylandGlobals globals = {0};
+        auto registry = wl_display_get_registry(wlDisplay);
+        wl_registry_add_listener(registry, &registry_listener, (void *)&globals);
+
+        wl_display_dispatch(wlDisplay);
+        wl_display_roundtrip(wlDisplay);
+        if (!globals.compositor)
+        {
+            return nullptr;
+        }
+        if (!globals.shell)
+        {
+            return nullptr;
+        }
+
+        auto wlSurface = wl_compositor_create_surface(globals.compositor);
+        if (!wlSurface)
+        {
+            return nullptr;
+        }
+
+        auto shellSurface = wl_shell_get_shell_surface(globals.shell, wlSurface);
+        wl_shell_surface_set_toplevel(shellSurface);
+        auto ptr = std::unique_ptr<WaylandWindow>(new WaylandWindow(wlDisplay, wlSurface));
+
+        auto wlEglWindow = wl_egl_window_create(wlSurface, width, height);
+        if (!wlEglWindow)
+        {
+            return nullptr;
+        }
+
+        initEGLDisplay((EGLNativeDisplayType)wlDisplay, (EGLNativeWindowType)wlEglWindow, &ptr->eglDisplay, &ptr->eglSurface);
+
+        return ptr;
+    }
+
+    ~WaylandWindow()
+    {
+        wl_display_disconnect(wlDisplay);
+    }
+
+    wl_surface *surface()
+    {
+        return wlSurface;
+    }
+
+    wl_display *display()
+    {
+        return wlDisplay;
+    }
+
+    bool dispatch()
+    {
+        return wl_display_dispatch(wlDisplay) != -1;
+    }
+
+    void flush()
+    {
+        eglSwapBuffers(eglDisplay, eglSurface);
+    }
+};
+
 int main(int argc, char **argv)
 {
     int width = 320;
     int height = 240;
-
-    struct wl_display *wlDisplay;
-    EGLDisplay eglDisplay;
-    EGLSurface eglSurface;
-
-    initWindow(width, height, &wlDisplay, &eglDisplay, &eglSurface);
+    auto w = WaylandWindow::create(width, height);
+    if (!w)
+    {
+        return 1;
+    }
 
     GLuint programObject = initProgramObject();
     assert(programObject);
-
     draw(programObject, width, height);
-    eglSwapBuffers(eglDisplay, eglSurface);
-
-    while (wl_display_dispatch(wlDisplay) != -1)
+    w->flush();
+    while (w->dispatch())
     {
     }
 
     glDeleteProgram(programObject);
-
-    wl_display_disconnect(wlDisplay);
 
     return 0;
 }
