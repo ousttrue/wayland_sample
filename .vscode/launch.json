@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "waygl",
+            "name": "wayegl",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/waygl",
+            "program": "${workspaceFolder}/build/Debug/bin/wayegl",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
